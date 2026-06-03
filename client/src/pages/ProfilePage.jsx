@@ -8,29 +8,41 @@ const ProfilePage = () => {
   const { user, updateProfile } = useAuth()
   const [fullName, setFullName] = useState(user?.fullName || '')
   const [bio, setBio] = useState(user?.bio || '')
-  const [profilePic, setProfilePic] = useState(user?.profilePic || '')
+  const [profilePicPreview, setProfilePicPreview] = useState(user?.profilePic || '')
+  const [profilePicData, setProfilePicData] = useState('')
   const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
 
   const handleImageChange = (event) => {
     const file = event.target.files?.[0]
 
     if (file) {
-      setProfilePic(URL.createObjectURL(file))
+      const reader = new FileReader()
+      reader.onload = () => {
+        setProfilePicPreview(reader.result)
+        setProfilePicData(reader.result)
+      }
+      reader.readAsDataURL(file)
     }
   }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
     setStatus('')
+    setError('')
 
-    await updateProfile({
-      fullName: fullName.trim(),
-      bio: bio.trim(),
-      profilePic,
-    })
+    try {
+      await updateProfile({
+        fullName: fullName.trim(),
+        bio: bio.trim(),
+        ...(profilePicData && { profilePic: profilePicData }),
+      })
 
-    setStatus('Profile saved.')
-    setTimeout(() => navigate('/'), 400)
+      setStatus('Profile saved.')
+      setTimeout(() => navigate('/'), 400)
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to update profile.')
+    }
   }
 
   return (
@@ -42,7 +54,7 @@ const ProfilePage = () => {
         <div className="flex flex-col gap-5">
           <div>
             <h1 className="text-2xl font-medium">Edit profile</h1>
-            <p className="text-sm text-gray-300 mt-1">This profile object is ready to send to your backend later.</p>
+            <p className="text-sm text-gray-300 mt-1">Update your chat profile.</p>
           </div>
 
           <input
@@ -63,6 +75,7 @@ const ProfilePage = () => {
           />
 
           {status && <p className="text-sm text-green-300">{status}</p>}
+          {error && <p className="text-sm text-red-300">{error}</p>}
 
           <div className="flex items-center gap-3">
             <button type="submit" className="py-3 px-7 bg-gradient-to-r from-purple-400 to-violet-600 text-white rounded-md cursor-pointer">
@@ -75,7 +88,7 @@ const ProfilePage = () => {
         </div>
 
         <div className="flex flex-col items-center justify-center gap-5 border border-gray-600/70 rounded-lg p-6 bg-[#282142]/30">
-          <img src={profilePic || assets.avatar_icon} alt="" className="w-28 aspect-square rounded-full object-cover" />
+          <img src={profilePicPreview || assets.avatar_icon} alt="" className="w-28 aspect-square rounded-full object-cover" />
           <label htmlFor="avatar" className="cursor-pointer text-sm text-violet-200 hover:text-white">
             Change avatar
           </label>

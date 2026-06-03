@@ -1,61 +1,137 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import assets, { messagesDummyData } from '../assets/assets'
+import { useEffect, useRef, useState } from 'react'
+import assets from '../assets/assets'
 import { formatMessageTime } from '../lib/utils'
 import { useAuth } from '../context/useAuth'
+import { api, endpoints } from '../lib/chatApi'
+
+const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(reader.result)
+  reader.onerror = reject
+  reader.readAsDataURL(file)
+})
 
 const ChatContainer = ({ selectedUser, setSelectedUser }) => {
   const scrollEnd = useRef()
-  const { user } = useAuth()
+  const { user, socket, onlineUsers } = useAuth()
   const [messageText, setMessageText] = useState('')
-  const [messages, setMessages] = useState(messagesDummyData)
-  const currentUserId = user?._id || 'current-user'
+  const [messages, setMessages] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [isSending, setIsSending] = useState(false)
+  const [error, setError] = useState('')
+  const currentUserId = user?._id
+  const isSelectedUserOnline = selectedUser?._id && onlineUsers.includes(selectedUser._id)
 
-  const activeMessages = useMemo(() => messages, [messages])
+  useEffect(() => {
+    if (!selectedUser?._id) {
+      return
+    }
+
+    const fetchMessages = async () => {
+      setIsLoading(true)
+      setError('')
+
+      try {
+        const response = await api.get(endpoints.messages(selectedUser._id))
+        setMessages(response.data.messages || [])
+      } catch (requestError) {
+        setError(requestError.response?.data?.message || 'Unable to load messages.')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchMessages()
+  }, [selectedUser?._id])
+
+  useEffect(() => {
+    if (!socket || !selectedUser?._id) {
+      return
+    }
+
+    const handleNewMessage = (newMessage) => {
+      const belongsToOpenChat = newMessage.senderId === selectedUser._id || newMessage.receiverId === selectedUser._id
+
+      if (!belongsToOpenChat) {
+        return
+      }
+
+      setMessages((previousMessages) => {
+        if (previousMessages.some((message) => message._id === newMessage._id)) {
+          return previousMessages
+        }
+
+        return [...previousMessages, newMessage]
+      })
+
+      if (newMessage.senderId === selectedUser._id) {
+        api.put(endpoints.markMessage(newMessage._id)).catch(() => {})
+      }
+    }
+
+    socket.on('newMessage', handleNewMessage)
+
+    return () => {
+      socket.off('newMessage', handleNewMessage)
+    }
+  }, [socket, selectedUser?._id])
 
   useEffect(() => {
     if (scrollEnd.current) {
       scrollEnd.current.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [activeMessages, selectedUser])
+  }, [messages, selectedUser])
 
-  const handleSendMessage = (event) => {
-    event.preventDefault()
+  const appendSentMessage = (response) => {
+    const sentMessage = response.data.newMessage || response.data.message
 
-    if (!messageText.trim() || !selectedUser) {
-      return
+    if (sentMessage?._id) {
+      setMessages((previousMessages) => [...previousMessages, sentMessage])
     }
-
-    const nextMessage = {
-      _id: crypto.randomUUID(),
-      senderId: currentUserId,
-      receiverId: selectedUser._id,
-      text: messageText.trim(),
-      seen: false,
-      createdAt: new Date().toISOString(),
-    }
-
-    setMessages((previousMessages) => [...previousMessages, nextMessage])
-    setMessageText('')
   }
 
-  const handleImageMessage = (event) => {
-    const file = event.target.files?.[0]
+  const handleSendMessage = async (event) => {
+    event.preventDefault()
 
-    if (!file || !selectedUser) {
+    if (!messageText.trim() || !selectedUser || isSending) {
       return
     }
 
-    const nextMessage = {
-      _id: crypto.randomUUID(),
-      senderId: currentUserId,
-      receiverId: selectedUser._id,
-      image: URL.createObjectURL(file),
-      seen: false,
-      createdAt: new Date().toISOString(),
+    setIsSending(true)
+    setError('')
+
+    try {
+      const text = messageText.trim()
+      setMessageText('')
+      const response = await api.post(endpoints.sendMessage(selectedUser._id), { text })
+      appendSentMessage(response)
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to send message.')
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  const handleImageMessage = async (event) => {
+    const file = event.target.files?.[0]
+
+    if (!file || !selectedUser || isSending) {
+      return
     }
 
-    setMessages((previousMessages) => [...previousMessages, nextMessage])
-    event.target.value = ''
+    setIsSending(true)
+    setError('')
+
+    try {
+      const image = await readFileAsDataUrl(file)
+      const response = await api.post(endpoints.sendMessage(selectedUser._id), { image })
+      appendSentMessage(response)
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Unable to send image.')
+    } finally {
+      event.target.value = ''
+      setIsSending(false)
+    }
   }
 
   return selectedUser ? (
@@ -64,7 +140,7 @@ const ChatContainer = ({ selectedUser, setSelectedUser }) => {
         <img src={selectedUser.profilePic || assets.avatar_icon} alt="" className="w-8 aspect-square rounded-full" />
         <p className="flex-1 text-lg text-white flex items-center gap-2 min-w-0">
           <span className="truncate">{selectedUser.fullName}</span>
-          <span className="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+          {isSelectedUserOnline && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>}
         </p>
         <button onClick={() => setSelectedUser(null)} className="md:hidden">
           <img src={assets.arrow_icon} alt="Back" className="max-w-7" />
@@ -73,7 +149,9 @@ const ChatContainer = ({ selectedUser, setSelectedUser }) => {
       </div>
 
       <div className="flex flex-col h-[calc(100%-124px)] overflow-y-scroll p-3 pb-6">
-        {activeMessages.map((msg) => (
+        {isLoading && <p className="text-sm text-gray-400 text-center mt-8">Loading messages...</p>}
+        {error && <p className="text-sm text-red-300 text-center mt-4">{error}</p>}
+        {!isLoading && messages.map((msg) => (
           <div key={msg._id} className={`flex items-end gap-2 ${msg.senderId === currentUserId ? 'justify-end' : 'justify-end flex-row-reverse'}`}>
             {msg.image ? (
               <img src={msg.image} alt="" className="max-w-[230px] border border-gray-700 rounded-lg overflow-hidden mb-8" />
@@ -92,6 +170,7 @@ const ChatContainer = ({ selectedUser, setSelectedUser }) => {
             </div>
           </div>
         ))}
+        {!isLoading && messages.length === 0 && !error && <p className="text-sm text-gray-400 text-center mt-8">No messages yet.</p>}
         <div ref={scrollEnd}></div>
       </div>
 
@@ -109,7 +188,7 @@ const ChatContainer = ({ selectedUser, setSelectedUser }) => {
             <img src={assets.gallery_icon} alt="Attach" className="w-5 mr-2 cursor-pointer" />
           </label>
         </div>
-        <button type="submit" disabled={!messageText.trim()} className="disabled:opacity-50">
+        <button type="submit" disabled={!messageText.trim() || isSending} className="disabled:opacity-50">
           <img src={assets.send_button} alt="Send" className="w-7 cursor-pointer" />
         </button>
       </form>

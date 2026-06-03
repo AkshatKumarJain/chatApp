@@ -1,24 +1,56 @@
-import { useMemo, useState } from 'react'
-import assets, { userDummyData } from '../assets/assets'
+import { useEffect, useMemo, useState } from 'react'
+import assets from '../assets/assets'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
+import { api, endpoints } from '../lib/chatApi'
 
 const Sidebar = ({ selectedUser, setSelectedUser }) => {
   const navigate = useNavigate()
-  const { logout } = useAuth()
+  const { logout, onlineUsers } = useAuth()
   const [search, setSearch] = useState('')
+  const [users, setUsers] = useState([])
+  const [unseenMessages, setUnseenMessages] = useState({})
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const users = useMemo(() => {
+  useEffect(() => {
+    const fetchUsers = async () => {
+      setIsLoading(true)
+      setError('')
+
+      try {
+        const response = await api.get(endpoints.users)
+        setUsers(response.data.users || [])
+        setUnseenMessages(response.data.unseenMessages || {})
+      } catch (requestError) {
+        setError(requestError.response?.data?.message || 'Unable to load users.')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchUsers()
+  }, [])
+
+  const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase()
 
     if (!query) {
-      return userDummyData
+      return users
     }
 
-    return userDummyData.filter((user) =>
+    return users.filter((user) =>
       user.fullName.toLowerCase().includes(query) || user.email.toLowerCase().includes(query),
     )
-  }, [search])
+  }, [search, users])
+
+  const handleSelectUser = (user) => {
+    setSelectedUser(user)
+    setUnseenMessages((previous) => ({
+      ...previous,
+      [user._id]: 0,
+    }))
+  }
 
   const handleLogout = () => {
     logout()
@@ -56,23 +88,32 @@ const Sidebar = ({ selectedUser, setSelectedUser }) => {
       </div>
 
       <div className="flex flex-col">
-        {users.map((user, index) => (
-          <button
-            onClick={() => setSelectedUser(user)}
-            key={user._id}
-            className={`relative flex items-center gap-2 p-2 pl-4 rounded cursor-pointer max-sm:text-sm text-left ${selectedUser?._id === user._id && 'bg-[#282142]/50'}`}
-          >
-            <img src={user?.profilePic || assets.avatar_icon} alt="" className="w-[35px] aspect-square rounded-full" />
-            <div className="flex flex-col leading-5 min-w-0">
-              <p>{user.fullName}</p>
-              {index < 3
-                ? <span className="text-green-400 text-xs">Online</span>
-                : <span className="text-neutral-400 text-xs">Offline</span>}
-            </div>
-            {index > 2 && <p className="absolute top-4 right-4 text-xs h-5 w-5 flex justify-center items-center rounded-full bg-violet-500/50">{index}</p>}
-          </button>
-        ))}
-        {users.length === 0 && <p className="text-sm text-gray-400 p-4">No users found.</p>}
+        {isLoading && <p className="text-sm text-gray-400 p-4">Loading users...</p>}
+        {error && <p className="text-sm text-red-300 p-4">{error}</p>}
+
+        {!isLoading && !error && filteredUsers.map((user) => {
+          const isOnline = onlineUsers.includes(user._id)
+          const unreadCount = unseenMessages[user._id] || 0
+
+          return (
+            <button
+              onClick={() => handleSelectUser(user)}
+              key={user._id}
+              className={`relative flex items-center gap-2 p-2 pl-4 rounded cursor-pointer max-sm:text-sm text-left ${selectedUser?._id === user._id && 'bg-[#282142]/50'}`}
+            >
+              <img src={user?.profilePic || assets.avatar_icon} alt="" className="w-[35px] aspect-square rounded-full" />
+              <div className="flex flex-col leading-5 min-w-0">
+                <p className="truncate">{user.fullName}</p>
+                {isOnline
+                  ? <span className="text-green-400 text-xs">Online</span>
+                  : <span className="text-neutral-400 text-xs">Offline</span>}
+              </div>
+              {unreadCount > 0 && <p className="absolute top-4 right-4 text-xs h-5 min-w-5 px-1 flex justify-center items-center rounded-full bg-violet-500/50">{unreadCount}</p>}
+            </button>
+          )
+        })}
+
+        {!isLoading && !error && filteredUsers.length === 0 && <p className="text-sm text-gray-400 p-4">No users found.</p>}
       </div>
     </div>
   )

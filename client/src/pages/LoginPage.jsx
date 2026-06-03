@@ -41,8 +41,8 @@ const LoginPage = ({ mode = 'login' }) => {
       }
 
       navigate(redirectTo, { replace: true })
-    } catch {
-      setError('Something went wrong. Please try again.')
+    } catch (error) {
+      setError(error.response?.data?.message || error.message || 'Something went wrong. Please try again.')
     } finally {
       setIsSubmitting(false)
     }

@@ -1,21 +1,57 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:5000'
+import axios from 'axios'
 
-export const endpoints = {
-  login: `${API_URL}/auth/login`,
-  register: `${API_URL}/auth/register`,
-  me: `${API_URL}/auth/me`,
-  users: `${API_URL}/users`,
-  messages: (userId) => `${API_URL}/messages/${userId}`,
-  socket: WS_URL,
-}
+export const AUTH_STORAGE_KEY = 'quickchat-auth'
 
-export const createSocketUrl = (token) => {
-  const url = new URL(WS_URL)
+const trimUrl = (url) => url?.replace(/\/+$/, '')
 
+export const BACKEND_URL = trimUrl(import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000')
+export const API_URL = trimUrl(import.meta.env.VITE_API_URL || `${BACKEND_URL}/api`)
+export const SOCKET_URL = trimUrl(import.meta.env.VITE_WS_URL || BACKEND_URL)
+
+export const api = axios.create({
+  baseURL: API_URL,
+})
+
+export const setAuthToken = (token) => {
   if (token) {
-    url.searchParams.set('token', token)
+    api.defaults.headers.common.token = token
+    api.defaults.headers.common.Authorization = `Bearer ${token}`
+    return
   }
 
-  return url.toString()
+  delete api.defaults.headers.common.token
+  delete api.defaults.headers.common.Authorization
+}
+
+api.interceptors.request.use((config) => {
+  config.headers = config.headers || {}
+
+  if (config.headers?.token) {
+    return config
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null')
+
+    if (stored?.token) {
+      config.headers.token = stored.token
+      config.headers.Authorization = `Bearer ${stored.token}`
+    }
+  } catch {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+  }
+
+  return config
+})
+
+export const endpoints = {
+  login: '/auth/login',
+  signup: '/auth/signup',
+  register: '/auth/signup',
+  check: '/auth/check',
+  updateProfile: '/auth/update-profile',
+  users: '/messages/users',
+  messages: (userId) => `/messages/${userId}`,
+  sendMessage: (userId) => `/messages/send/${userId}`,
+  markMessage: (messageId) => `/messages/mark/${messageId}`,
 }
